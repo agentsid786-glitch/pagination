@@ -77,4 +77,51 @@ def decode_cursor(cursor: str) -> int:
 
 # ==========================================
 # 3. Endpoints
-# =================
+# ==========================================
+@app.post("/orders")
+async def create_order(request: Request, response: Response):
+    global next_new_order_id
+    idem_key = request.headers.get("Idempotency-Key")
+    
+    # IDEMPOTENCY CHECK: If the key was already used, return the exact same response!
+    if idem_key and idem_key in idempotency_cache:
+        response.status_code = 201
+        return idempotency_cache[idem_key]
+        
+    # Otherwise, create a brand new order
+    new_order = {
+        "id": next_new_order_id,
+        "status": "processing",
+        "created_at": time.time()
+    }
+    next_new_order_id += 1
+    
+    # Save to cache so future requests with this key get the same data
+    if idem_key:
+        idempotency_cache[idem_key] = new_order
+        
+    response.status_code = 201
+    return new_order
+
+
+@app.get("/orders")
+async def get_orders(limit: int = 10, cursor: str = None):
+    # Figure out where to start in the list based on the opaque cursor
+    start_idx = 0
+    if cursor:
+        start_idx = decode_cursor(cursor)
+        
+    end_idx = start_idx + limit
+    
+    # Slice the items from our fixed catalog (1 to 55)
+    items = CATALOG[start_idx:end_idx]
+    
+    # If there is more data left, generate a new cursor for the next page
+    next_cursor = None
+    if end_idx < TOTAL_ORDERS:
+        next_cursor = encode_cursor(end_idx)
+        
+    return {
+        "items": items,
+        "next_cursor": next_cursor
+    }
