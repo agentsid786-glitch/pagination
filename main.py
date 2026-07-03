@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Enable CORS for the grader (Fixed credentials & exposed Retry-After header)
+# Enable CORS for the grader
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,6 +37,10 @@ next_new_order_id = TOTAL_ORDERS + 1  # Ensures POSTs get new IDs starting at 56
 # ==========================================
 @app.middleware("http")
 async def rate_limiter(request: Request, call_next):
+    # Ignore OPTIONS preflight checks so they don't get accidentally blocked
+    if request.method == "OPTIONS":
+        return await call_next(request)
+        
     client_id = request.headers.get("X-Client-Id")
     
     if client_id:
@@ -50,10 +54,15 @@ async def rate_limiter(request: Request, call_next):
             oldest_request_time = client_requests[client_id][0]
             retry_after = int(WINDOW_SECONDS - (now - oldest_request_time))
             
+            # CRITICAL FIX: Manually inject CORS headers into the 429 response!
             return JSONResponse(
                 content={"error": "Too Many Requests"}, 
                 status_code=429, 
-                headers={"Retry-After": str(max(1, retry_after))}
+                headers={
+                    "Retry-After": str(max(1, retry_after)),
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Expose-Headers": "Retry-After"
+                }
             )
             
         # Log this request's timestamp
@@ -102,7 +111,6 @@ async def create_order(request: Request, response: Response):
         
     response.status_code = 201
     return new_order
-
 
 @app.get("/orders")
 async def get_orders(limit: int = 10, cursor: str = None):
